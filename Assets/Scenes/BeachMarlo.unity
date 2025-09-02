@@ -5481,12 +5481,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 434ebcf053958fe4e87b19fbceedab73, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  portName: COM3
+  portName: COM8
   baudRate: 9600
   RecordingPath: C:\Users\DALAB_2\projects\sketchscape-vr-main\test
   fileid: 1
   StressDataList: []
-  writeInterval: 0.1
+  writeInterval: 0.01
 --- !u!1 &562815304 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 121000, guid: cb34250ae9427604f9aeac015096d161, type: 3}
@@ -20500,6 +20500,10 @@ PrefabInstance:
       propertyPath: m_SizeDelta.y
       value: 46
       objectReference: {fileID: 0}
+    - target: {fileID: 2291735172237534479, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 2388127358730611130, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_Enabled
       value: 1
@@ -20784,6 +20788,10 @@ PrefabInstance:
       propertyPath: m_IsActive
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 4972139753948832970, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
     - target: {fileID: 5247073994129773919, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_Enabled
       value: 0
@@ -20854,6 +20862,10 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7277802327471902856, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7277802327849468115, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
+      propertyPath: m_Enabled
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 7277802327849468127, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
@@ -21152,7 +21164,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8973309649235986089, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8982165961091321367, guid: 77e7c27b2c5525e4aa8cc9f99d654486, type: 3}
       propertyPath: m_IsActive
@@ -22473,9 +22485,17 @@ PrefabInstance:
     m_TransformParent: {fileID: 0}
     m_Modifications:
     - target: {fileID: 483845389392840266, guid: 8bb203390c66645db9ae77532c679dec, type: 3}
+      propertyPath: magnifierType
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 483845389392840266, guid: 8bb203390c66645db9ae77532c679dec, type: 3}
       propertyPath: clearCanvasButton
       value: 
       objectReference: {fileID: 8648486290613951519}
+    - target: {fileID: 483845389392840266, guid: 8bb203390c66645db9ae77532c679dec, type: 3}
+      propertyPath: fingerStressRecording
+      value: 
+      objectReference: {fileID: 560390971}
     - target: {fileID: 483845389392840266, guid: 8bb203390c66645db9ae77532c679dec, type: 3}
       propertyPath: leftControllerTransform
       value: 

@@ -4,7 +4,10 @@ using System.IO;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
-using UnityEngine.XR;
+using Unity.Mathematics;
+using System.Linq;
+using System.Threading;
+using UnityEngine.XR.Interaction.Toolkit.Inputs.Composites;
 
 [RequireComponent(typeof(Renderer))]
 public class TexturePainter : MonoBehaviour
@@ -36,6 +39,10 @@ public class TexturePainter : MonoBehaviour
     [Header("Configs")]
     [SerializeField] private List<float> MagScaleList = new() { 1f, 1.5f, 2f };
     [SerializeField] private MagnifierType magnifierType = MagnifierType.Hand;
+    [SerializeField] public float baselineForce = 15.0f;
+    [SerializeField] public FingerStressRecording fingerStressRecording;
+    [SerializeField] public List<float> sensetiveStage = new List<float> { 8.1f, 5.5f }; //从小到大，越来越简单。对数均分
+
 
 
     private Texture2D runtimeTexture;
@@ -56,18 +63,39 @@ public class TexturePainter : MonoBehaviour
     private List<(Vector2Int, Color)> savedIndicatorColorList = new();
     private Magnifier magnifier;
     private int MagnifierLevel = 0;
-    private float currentMagScale;
-    private float targetMagScale;
+    private float currentMagScale = 1.0f;
+    private float targetMagScale = 1.0f;
     private float MagSpeed = 0.5f;
     private bool UpOrDown; //ture for up, false for down
     private bool magnifierUpTriggered = false;
     private bool magnifierDownTriggered = false;
-
+    private Thread recodStressThread;
+    private Vector3 accumulatedTranslation = Vector3.zero;
+    private Vector3 accumulatedRotation = Vector3.zero;
+    private Vector3 lastControllerPosition = Vector3.zero;
+    private Vector3 lastControllerRotation = Vector3.zero;
+    private bool isFirstFrame = true;
     public enum MagnifierType
     {
         Hand = 0,
         Auto = 1
     }
+    // for auto method
+    public enum CalibrationState
+    {
+        Init,
+        Rising,
+        Stable
+    }
+
+    private float calibrationMinValue, calibrationMaxValue;
+    private float stabilityThreshold = 2.5f; // 稳定性阈值，可根据需要调整
+    private float stabilizedValue = 0f;
+    private CalibrationState calibrationState;
+    private Queue<float> recentForceValues = new Queue<float>(5);
+    private List<string> StressDataList = new List<string>();
+    private int lastProcessedIndex = 0;
+    private bool stabilized;
 
 
     void OnEnable()
@@ -90,6 +118,12 @@ public class TexturePainter : MonoBehaviour
 
     void Start()
     {
+        //only for debug
+        calibrationMaxValue = 80.0f;
+        calibrationMinValue = 40.0f;
+
+        stabilized = false;
+
         var renderer = GetComponent<Renderer>();
         this.texelsToDraw = new();
 
@@ -120,9 +154,11 @@ public class TexturePainter : MonoBehaviour
         ClearCanvas();
         magnifier = GetComponent<Magnifier>();
         magnifier.CloseMagnifier();
-        currentMagScale = MagScaleList[MagnifierLevel];
 
         SaveCanvasToFile(runtimeTexture, "original");
+        ResetStabilityDetection();
+        recodStressThread = new Thread(ReceiveStressData);
+        recodStressThread.Start();
     }
 
     bool DetermineUpOrDown(float current, float target)
@@ -144,83 +180,102 @@ public class TexturePainter : MonoBehaviour
 
         // Reset previous texel when no brush is drawing
         if (inputState == 0)
+        {
             previousTexel = null;
+            ResetAccumulatedCorrection();
+            ResetMagLevel();
+        }
 
 
         foreach (var device in InputSystem.devices)
         {
             if (device is UnityEngine.InputSystem.XR.XRController controller)
             {
-                if (!controller.path.ToLower().Contains("1"))
-                    continue;
-                // 这些通常是 ButtonControl
-                var primary = controller.TryGetChildControl<UnityEngine.InputSystem.Controls.ButtonControl>("primaryButton");
-                if (primary != null && primary.wasPressedThisFrame)//for revoke
+                if (device == UnityEngine.InputSystem.XR.XRController.rightHand)
                 {
-                    Debug.Log($"{controller.name} Primary Button Pressed");
-                    // 触发撤销事件
-                    if (previousTextures.Count > 0)
+                    // 这些通常是 ButtonControl
+                    var primary = controller.TryGetChildControl<UnityEngine.InputSystem.Controls.ButtonControl>("primaryButton");
+                    if (primary != null && primary.wasPressedThisFrame)//for revoke
                     {
-                        var lastTexture = previousTextures.Pop();
-                        Destroy(runtimeTexture);
-                        runtimeTexture = lastTexture;
-                        GetComponent<Renderer>().material.mainTexture = runtimeTexture;
-                        Debug.Log("Undo triggered by Primary Button");
-                    }
+                        Debug.Log($"{controller.name} Primary Button Pressed");
+                        // 触发撤销事件
+                        if (previousTextures.Count > 0)
+                        {
+                            var lastTexture = previousTextures.Pop();
+                            Destroy(runtimeTexture);
+                            runtimeTexture = lastTexture;
+                            GetComponent<Renderer>().material.mainTexture = runtimeTexture;
+                            Debug.Log("Undo triggered by Primary Button");
+                        }
 
-                    if (previousresultTextures.Count > 0)
-                    {
-                        var lastTexture = previousresultTextures.Pop();
-                        Destroy(resultTexture);
-                        resultTexture = lastTexture;
+                        if (previousresultTextures.Count > 0)
+                        {
+                            var lastTexture = previousresultTextures.Pop();
+                            Destroy(resultTexture);
+                            resultTexture = lastTexture;
+                        }
                     }
                 }
-
-                if (magnifierType == MagnifierType.Hand)
+                if (device == UnityEngine.InputSystem.XR.XRController.leftHand)
                 {
-                    var stick = controller.TryGetChildControl<UnityEngine.InputSystem.Controls.StickControl>("thumbstick");
-                    if (stick != null) // for magnifier
+                    if (magnifierType == MagnifierType.Hand)
                     {
-                        float vertical = stick.ReadValue().y;
-                        // 你可以设置一个阈值，避免误触
-                        if (vertical > 0.5f)
+                        var stick = controller.TryGetChildControl<UnityEngine.InputSystem.Controls.StickControl>("thumbstick");
+                        if (stick != null) // for magnifier
                         {
-                            if (!magnifierUpTriggered)
+                            float vertical = stick.ReadValue().y;
+                            // 你可以设置一个阈值，避免误触
+                            if (vertical > 0.5f)
                             {
-                                if (MagnifierLevel < MagScaleList.Count - 1)
+                                if (!magnifierUpTriggered)
                                 {
-                                    Debug.Log($"Magnifier Level Up: {MagnifierLevel}");
-                                    MagnifierLevel++; //change, more adjustment
-                                    targetMagScale = MagScaleList[MagnifierLevel];
-                                    UpOrDown = DetermineUpOrDown(currentMagScale, targetMagScale);
-                                }
+                                    if (MagnifierLevel < MagScaleList.Count - 1)
+                                    {
+                                        Debug.Log($"Magnifier Level Up: {MagnifierLevel}");
+                                        MagnifierLevel++; //change, more adjustment
+                                        targetMagScale = MagScaleList[MagnifierLevel];
+                                        UpOrDown = DetermineUpOrDown(currentMagScale, targetMagScale);
+                                    }
 
-                                magnifierUpTriggered = true;
+                                    magnifierUpTriggered = true;
+                                }
+                            }
+                            else
+                            {
+                                magnifierUpTriggered = false;
+                            }
+
+                            // 向下，只触发一次
+                            if (vertical < -0.5f)
+                            {
+                                if (!magnifierDownTriggered)
+                                {
+                                    if (MagnifierLevel > 0)
+                                    {
+                                        MagnifierLevel--;
+                                        Debug.Log($"Magnifier Level Down: {MagnifierLevel}");
+                                        targetMagScale = MagScaleList[MagnifierLevel];
+                                        UpOrDown = DetermineUpOrDown(currentMagScale, targetMagScale);
+                                    }
+                                    magnifierDownTriggered = true;
+                                }
+                            }
+                            else
+                            {
+                                magnifierDownTriggered = false;
                             }
                         }
-                        else
-                        {
-                            magnifierUpTriggered = false;
-                        }
+                    }
 
-                        // 向下，只触发一次
-                        if (vertical < -0.5f)
+                    else if (magnifierType == MagnifierType.Auto)
+                    {
+                        if (stabilized)
                         {
-                            if (!magnifierDownTriggered)
-                            {
-                                if (MagnifierLevel > 0)
-                                {
-                                    MagnifierLevel--;
-                                    Debug.Log($"Magnifier Level Down: {MagnifierLevel}");
-                                    targetMagScale = MagScaleList[MagnifierLevel];
-                                    UpOrDown = DetermineUpOrDown(currentMagScale, targetMagScale);
-                                }
-                                magnifierDownTriggered = true;
-                            }
-                        }
-                        else
-                        {
-                            magnifierDownTriggered = false;
+                            double currentW = setModel(stabilizedValue);
+                            MagnifierLevel = checkLevel(currentW);
+                            stabilized = false;
+                            targetMagScale = MagScaleList[MagnifierLevel];
+                            UpOrDown = DetermineUpOrDown(currentMagScale, targetMagScale);
                         }
                     }
                 }
@@ -243,6 +298,16 @@ public class TexturePainter : MonoBehaviour
 
     }
 
+    private int checkLevel(double current_W)
+    {
+        if (current_W > sensetiveStage[0])
+            return 0;
+        else if (current_W > sensetiveStage[1])
+            return 1;
+        else
+            return 2;
+    }
+
     private void StartMagnifier()
     {
         magnifier.ShowMagnifier();
@@ -252,11 +317,18 @@ public class TexturePainter : MonoBehaviour
     {
         magnifier.CloseMagnifier();
     }
+    private void ResetMagLevel()
+    {
+        MagnifierLevel = 0;
+        targetMagScale = MagScaleList[MagnifierLevel];
+        currentMagScale = targetMagScale;
+    }
 
     private void ProcessBrush(Brush brushFlag, bool isPressed, Transform controllerTransform)
     {
         bool wasDrawing = this.inputState.HasFlag(brushFlag);
-        Ray ray = new Ray(controllerTransform.position, controllerTransform.forward);
+        // Ray ray = new Ray(controllerTransform.position, controllerTransform.forward);
+        Ray ray = GetCorrectedRay(controllerTransform);
         bool ifHit = Physics.Raycast(ray, out RaycastHit hit);
 
         // clear the indicator color 
@@ -276,8 +348,10 @@ public class TexturePainter : MonoBehaviour
             {
                 savedLastFrame = true;
                 Debug.Log("invoke save a frame");
-                MagnifierLevel = 0;
-                targetMagScale = MagScaleList[MagnifierLevel];
+                if (magnifierType == MagnifierType.Auto)
+                {
+                    ResetStabilityDetection();
+                }
                 previousTextures.Push(Instantiate(this.runtimeTexture));
                 previousresultTextures.Push(Instantiate(this.resultTexture));
                 if (previousTextures.Count > maxUndoSteps)
@@ -386,6 +460,61 @@ public class TexturePainter : MonoBehaviour
             savedLastFrame = false;
             CloseMagnifier();
         }
+    }
+
+    private Ray GetCorrectedRay(Transform controllerTransform)
+    {
+        if (isFirstFrame)
+        {
+            // 第一帧或未绘画时，使用原始射线
+            isFirstFrame = false;
+            return new Ray(controllerTransform.position, controllerTransform.forward);
+        }
+
+        // 计算当前帧的位移和旋转
+        Vector3 currentPosition = controllerTransform.position;
+        Vector3 currentRotation = controllerTransform.eulerAngles;
+
+        Vector3 deltaTranslation = currentPosition - lastControllerPosition;
+        Vector3 deltaRotation = currentRotation - lastControllerRotation;
+
+        // 处理角度环绕问题
+        for (int i = 0; i < 3; i++)
+        {
+            if (deltaRotation[i] > 180f) deltaRotation[i] -= 360f;
+            if (deltaRotation[i] < -180f) deltaRotation[i] += 360f;
+        }
+
+        // 根据放大镜级别进行修正
+        float scaleFactor = 1f / currentMagScale; // 放大镜倍数越高，敏感度越低
+
+        // 修正平移和旋转
+        Vector3 correctedTranslation = deltaTranslation * scaleFactor;
+        Vector3 correctedRotation = deltaRotation * scaleFactor;
+
+        // 累积修正向量
+        accumulatedTranslation += (deltaTranslation - correctedTranslation);
+        accumulatedRotation += (deltaRotation - correctedRotation);
+
+        // 应用累积修正到控制器变换
+        Vector3 correctedPosition = currentPosition - accumulatedTranslation;
+        Vector3 correctedEulerAngles = currentRotation - accumulatedRotation;
+
+        // 计算修正后的前向向量
+        Quaternion correctedQuaternion = Quaternion.Euler(correctedEulerAngles);
+        Vector3 correctedForward = correctedQuaternion * Vector3.forward;
+
+        lastControllerPosition = controllerTransform.position;
+        lastControllerRotation = controllerTransform.eulerAngles;
+
+        return new Ray(correctedPosition, correctedForward);
+    }
+
+    private void ResetAccumulatedCorrection()
+    {
+        accumulatedTranslation = Vector3.zero;
+        accumulatedRotation = Vector3.zero;
+        isFirstFrame = true;
     }
 
     void LateUpdate()
@@ -548,4 +677,106 @@ public class TexturePainter : MonoBehaviour
     }
 
     #endregion
+    private double setModel(double value)
+    {
+        double normalized_0_1 = (value - calibrationMinValue) / (calibrationMaxValue - calibrationMinValue);
+
+        // Then map to 0.35-0.64 range
+        double normalized_value = 0.35 + normalized_0_1 * (0.64 - 0.35);
+        double W = -71532.3780 / (1 + math.exp(-13.1867 * (normalized_value + 0.2441))) + 71536.3552;
+        return W;
+    }
+
+    private void CheckForceStability(string csvData)
+    {
+        try
+        {
+            // 假设力值在CSV的第一列，根据实际情况调整索引
+            string[] values = csvData.Split(',');
+            if (values.Length > 0 && float.TryParse(values[2], out float forceValue))
+            {
+                // 添加新值到队列
+                recentForceValues.Enqueue(forceValue);
+
+                // 保持队列大小为10
+                if (recentForceValues.Count > 5)
+                {
+                    recentForceValues.Dequeue();
+                }
+
+
+                if (calibrationState == CalibrationState.Init)
+                {
+                    if (forceValue > baselineForce)
+                        calibrationState = CalibrationState.Rising;
+                    else
+                    {
+                        return;
+                    }
+                }
+
+
+                // 当有足够数据时检测稳定性
+                if (recentForceValues.Count >= 5 && (calibrationState == CalibrationState.Rising || calibrationState == CalibrationState.Stable))
+                {
+                    float[] values_array = recentForceValues.ToArray();
+                    float mean = values_array.Average();
+                    float variance = values_array.Select(v => (v - mean) * (v - mean)).Average();
+                    float stdDev = Mathf.Sqrt(variance);
+                    // 如果标准差小于阈值，认为已稳定
+                    if (stdDev < stabilityThreshold)
+                    {
+                        calibrationState = CalibrationState.Stable;
+                        // this should only be used when calibration
+                        // if (mean > stabilizedValue)   
+                        // {
+                        stabilizedValue = mean;
+                        stabilized = true;
+                        Debug.Log($"Stabilized Force Value: {stabilizedValue}");
+                        // }
+                    }
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"Error parsing force data: {e.Message}");
+        }
+    }
+
+    private void ReceiveStressData()
+    {
+        while (fingerStressRecording != null)
+        {
+            // Check if new data is available in StressDataList
+            if (fingerStressRecording.StressDataList.Count > lastProcessedIndex)
+            {
+                // Process all new data
+                for (int i = lastProcessedIndex; i < fingerStressRecording.StressDataList.Count; i++)
+                {
+                    string data = fingerStressRecording.StressDataList[i];
+                    StressDataList.Add(data);
+
+                    // Parse CSV data and detect stability
+                    CheckForceStability(data);
+                }
+
+                // Update the last processed index
+                lastProcessedIndex = fingerStressRecording.StressDataList.Count;
+            }
+
+            // Small delay to prevent excessive CPU usage
+            Thread.Sleep(10);
+        }
+    }
+
+    private void ResetStabilityDetection()
+    {
+        lastProcessedIndex = fingerStressRecording.StressDataList.Count; // Reset the last processed index
+        recentForceValues.Clear();
+        stabilizedValue = 0f;
+        calibrationState = CalibrationState.Init;
+        stabilized = false;
+    }
+
 }
