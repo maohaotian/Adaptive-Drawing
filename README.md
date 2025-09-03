@@ -1,4 +1,4 @@
-# Sketchscape VR (Modified for IEEE VR 2026 User Study)
+# Sketchscape VR (Modified for XXX)
 
 This repository is a **modified fork** of [Sketchscape VR](https://github.com/Marlo-Ong/sketchscape-vr), originally created by **Team 10** for the CS/PSY 484: Virtual Reality class at the University of Nevada, Reno.  
 The modifications here are made to support a **user study at XXX**.
