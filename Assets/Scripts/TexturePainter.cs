@@ -7,7 +7,6 @@ using UnityEngine.UI;
 using Unity.Mathematics;
 using System.Linq;
 using System.Threading;
-using UnityEngine.XR.Interaction.Toolkit.Inputs.Composites;
 
 [RequireComponent(typeof(Renderer))]
 public class TexturePainter : MonoBehaviour
@@ -38,15 +37,15 @@ public class TexturePainter : MonoBehaviour
 
     [Header("Configs")]
     [SerializeField] private List<float> MagScaleList = new() { 1f, 1.5f, 2f };
-    [SerializeField] private MagnifierType magnifierType = MagnifierType.Hand;
+    [SerializeField] public MagnifierType magnifierType = MagnifierType.Hand;
     [SerializeField] public float baselineForce = 15.0f;
     [SerializeField] public FingerStressRecording fingerStressRecording;
     [SerializeField] public List<float> sensetiveStage = new List<float> { 8.1f, 5.5f }; //从小到大，越来越简单。对数均分
 
 
 
-    private Texture2D runtimeTexture;
-    private Texture2D resultTexture;
+    public Texture2D runtimeTexture;
+    public Texture2D resultTexture;
     private Vector2Int? previousTexel;
     private Dictionary<Vector2Int, Color> texelsToDraw;
     private bool isPainting = false;
@@ -59,7 +58,7 @@ public class TexturePainter : MonoBehaviour
     private Stack<Texture2D> previousresultTextures = new Stack<Texture2D>();
     private const int maxUndoSteps = 5;
     private bool savedLastFrame = false;
-    private Texture2D originalTexture;
+    public Texture2D originalTexture;
     private List<(Vector2Int, Color)> savedIndicatorColorList = new();
     private Magnifier magnifier;
     private int MagnifierLevel = 0;
@@ -75,6 +74,11 @@ public class TexturePainter : MonoBehaviour
     private Vector3 lastControllerPosition = Vector3.zero;
     private Vector3 lastControllerRotation = Vector3.zero;
     private bool isFirstFrame = true;
+
+    //for calibration
+    public bool calibration;
+    public float calibrationValue;
+    public int revertTime;
     public enum MagnifierType
     {
         Hand = 0,
@@ -88,14 +92,15 @@ public class TexturePainter : MonoBehaviour
         Stable
     }
 
-    private float calibrationMinValue, calibrationMaxValue;
+    public float calibrationMinValue, calibrationMaxValue;
     private float stabilityThreshold = 2.5f; // 稳定性阈值，可根据需要调整
-    private float stabilizedValue = 0f;
+    public float stabilizedValue = 0f;
     private CalibrationState calibrationState;
     private Queue<float> recentForceValues = new Queue<float>(5);
     private List<string> StressDataList = new List<string>();
     private int lastProcessedIndex = 0;
     private bool stabilized;
+    public Renderer renderer2;
 
 
     void OnEnable()
@@ -118,16 +123,13 @@ public class TexturePainter : MonoBehaviour
 
     void Start()
     {
-        //only for debug
-        calibrationMaxValue = 80.0f;
-        calibrationMinValue = 40.0f;
+        calibration = true;
+        calibrationValue = 0f;
 
-        stabilized = false;
-
-        var renderer = GetComponent<Renderer>();
+        renderer2 = GetComponent<Renderer>();
         this.texelsToDraw = new();
 
-        originalTexture = renderer.material.mainTexture as Texture2D;
+        originalTexture = renderer2.material.mainTexture as Texture2D;
 
         if (originalTexture != null)
         {
@@ -147,7 +149,7 @@ public class TexturePainter : MonoBehaviour
             resultTexture = new Texture2D(this.canvasResolution, this.canvasResolution, TextureFormat.RGBA32, false);
             ClearCanvas(); // 填充基础颜色
         }
-        renderer.material.mainTexture = runtimeTexture;
+        renderer2.material.mainTexture = runtimeTexture;
 
         this.clearCanvasButton.onClick.AddListener(ClearCanvas);
 
@@ -155,7 +157,7 @@ public class TexturePainter : MonoBehaviour
         magnifier = GetComponent<Magnifier>();
         magnifier.CloseMagnifier();
 
-        SaveCanvasToFile(runtimeTexture, "original");
+        // SaveCanvasToFile(runtimeTexture, "original");
         ResetStabilityDetection();
         recodStressThread = new Thread(ReceiveStressData);
         recodStressThread.Start();
@@ -202,6 +204,7 @@ public class TexturePainter : MonoBehaviour
                         if (previousTextures.Count > 0)
                         {
                             var lastTexture = previousTextures.Pop();
+                            revertTime++;
                             Destroy(runtimeTexture);
                             runtimeTexture = lastTexture;
                             GetComponent<Renderer>().material.mainTexture = runtimeTexture;
@@ -290,12 +293,6 @@ public class TexturePainter : MonoBehaviour
         {
             currentMagScale -= MagSpeed * Time.deltaTime;
         }
-
-        if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
-        {
-            SaveCanvasToFile();
-        }
-
     }
 
     private int checkLevel(double current_W)
@@ -348,7 +345,7 @@ public class TexturePainter : MonoBehaviour
             {
                 savedLastFrame = true;
                 Debug.Log("invoke save a frame");
-                if (magnifierType == MagnifierType.Auto)
+                if (magnifierType == MagnifierType.Auto && (!calibration))
                 {
                     ResetStabilityDetection();
                 }
@@ -649,10 +646,19 @@ public class TexturePainter : MonoBehaviour
         runtimeTexture.Apply();
         if (texelsToDraw != null) texelsToDraw.Clear();
         previousTexel = null;
+
+        revertTime = 0;
+        previousTextures.Clear();
+        previousresultTextures.Clear();
     }
 
-    public void SaveCanvasToFile(Texture2D resultTexture = null, string name = null)
+    public void SaveCanvasToFile(Texture2D resultTexture = null, string name = null,string userName = "test")
     {
+        string folderPath = Path.Combine(Application.dataPath, "Resources", userName);
+        if (!Directory.Exists(folderPath))
+        {
+            Directory.CreateDirectory(folderPath);
+        }
         string fileName;
         if (name == null)
             fileName = "texture" + System.DateTime.Now.ToString("HH-mm-ss") + ".png";
@@ -660,7 +666,7 @@ public class TexturePainter : MonoBehaviour
         {
             fileName = name + ".png";
         }
-        string filePath = Application.persistentDataPath + fileName;
+        string filePath = Path.Combine(folderPath, fileName);
         if (File.Exists(filePath))
         {
             Debug.Log($"File already exists at {filePath}, skipping save.");
@@ -728,12 +734,12 @@ public class TexturePainter : MonoBehaviour
                     {
                         calibrationState = CalibrationState.Stable;
                         // this should only be used when calibration
-                        // if (mean > stabilizedValue)   
-                        // {
-                        stabilizedValue = mean;
-                        stabilized = true;
-                        Debug.Log($"Stabilized Force Value: {stabilizedValue}");
-                        // }
+                        if ((calibration && mean > stabilizedValue) || !calibration)
+                        {
+                            stabilizedValue = mean;
+                            stabilized = true;
+                            Debug.Log($"Stabilized Force Value: {stabilizedValue}");
+                        }
                     }
                 }
             }
@@ -770,7 +776,7 @@ public class TexturePainter : MonoBehaviour
         }
     }
 
-    private void ResetStabilityDetection()
+    public void ResetStabilityDetection()
     {
         lastProcessedIndex = fingerStressRecording.StressDataList.Count; // Reset the last processed index
         recentForceValues.Clear();
