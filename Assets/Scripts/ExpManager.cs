@@ -7,17 +7,18 @@ public class ExpManager : MonoBehaviour
 {
     TexturePainter texturePainter;
     private int currentIndex = 0; //0~4
-    private float StartTime, EndTime;
+    private float StartTime;
 
     [Header("Configs")]
     [SerializeField]
     private List<Texture2D> BGList;
 
     [SerializeField]
-    private int autoIndex = 3;
+    private int autoType = 0;
     [SerializeField]
     public string userName;
     // Start is called before the first frame update
+    private int totalCount;
     void Start()
     {
         if (texturePainter == null)
@@ -25,9 +26,10 @@ public class ExpManager : MonoBehaviour
             texturePainter = GetComponent<TexturePainter>();
         }
         StartTime = Time.time;
+        totalCount = (BGList.Count-3)*2+3;
     }
 
-    void CurrentEnd(int previousIndex)
+    void CurrentEnd(int previousIndex) // only for calibration
     {
         if (previousIndex == 0)
         {
@@ -60,12 +62,12 @@ public class ExpManager : MonoBehaviour
             switchScene = true;
             previousIndex = currentIndex;
             currentIndex += 1;
-            if (currentIndex >= BGList.Count)
+            if (currentIndex >= totalCount)
             {
                 currentIndex -= 1;
                 switchScene = false;
-
             }
+            //only 2 for calibration
             if (currentIndex > 1)
             {
                 texturePainter.calibration = false;
@@ -116,20 +118,22 @@ public class ExpManager : MonoBehaviour
             texturePainter.originalTexture = BGList[currentIndex];
             //save data
             int revertTime = texturePainter.revertTime;
-            texturePainter.ClearCanvas();
-            texturePainter.renderer2.material.mainTexture = texturePainter.runtimeTexture;
             // save
-            if (currentIndex == 3 || currentIndex == 4)
+            if (previousIndex>= 3)
             {
-                texturePainter.SaveCanvasToFile(texturePainter.runtimeTexture, $"original_{currentIndex}", userName);
+                texturePainter.SaveCanvasToFile(texturePainter.resultTexture, $"result_{previousIndex}", userName); // save result
             }
-            if (previousIndex == 3 || previousIndex == 4)
+            texturePainter.ClearCanvas();
+            if (currentIndex >=3 )
             {
-                texturePainter.SaveCanvasToFile(texturePainter.resultTexture, $"result_{previousIndex}", userName);
+                texturePainter.SaveCanvasToFile(texturePainter.runtimeTexture, $"original_{currentIndex}", userName); // save original
             }
 
+            texturePainter.renderer2.material.mainTexture = texturePainter.runtimeTexture;
+
+
             //set magnifier
-            if (currentIndex == 2 || currentIndex == autoIndex)
+            if (currentIndex == 2 || (currentIndex > 2 && ((currentIndex-3) % 2 == autoType)))
             {
                 texturePainter.magnifierType = TexturePainter.MagnifierType.Auto;
             }
