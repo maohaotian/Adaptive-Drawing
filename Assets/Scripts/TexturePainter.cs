@@ -397,12 +397,12 @@ public class TexturePainter : MonoBehaviour
                     this.inputState |= brushFlag;
                     OnStartPainting?.Invoke(inputState);
                 }
-                if (MagnifierLevel > 0)
+                if (MagnifierLevel > 0 || magnifierType == MagnifierType.Auto) 
                 {
                     StartMagnifier();
                     magnifier.UpdateMagnifierGPU(new Vector2Int((int)(texelUV.x * runtimeTexture.width), (int)(texelUV.y * runtimeTexture.height)), runtimeTexture, hit.point, currentMagScale); // 默认隐藏放大镜
                 }
-                else
+                else // level = 0 and not auto
                 {
                     if (currentMagScale < targetMagScale)
                         CloseMagnifier();
