@@ -26,7 +26,7 @@ public class ExpManager : MonoBehaviour
             texturePainter = GetComponent<TexturePainter>();
         }
         StartTime = Time.time;
-        totalCount = (BGList.Count-3)*2+3;
+        totalCount = (BGList.Count - 3) * 2 + 3;
     }
 
     void CurrentEnd(int previousIndex) // only for calibration
@@ -52,7 +52,7 @@ public class ExpManager : MonoBehaviour
         if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
         {
             texturePainter.SaveCanvasToFile(texturePainter.resultTexture, $"result_{currentIndex}", userName);
-            recordData(currentIndex, Time.time - StartTime, texturePainter.revertTime);
+            recordData(currentIndex, Time.time - StartTime, texturePainter.revertTime, texturePainter.magnifierType.ToString());
         }
 
         bool switchScene = false;
@@ -115,25 +115,32 @@ public class ExpManager : MonoBehaviour
         if (switchScene)
         {
             CurrentEnd(previousIndex);
-            texturePainter.originalTexture = BGList[currentIndex];
+            int fixed_index = currentIndex;
+            if (fixed_index > 2)
+            {
+                fixed_index = 3 + (currentIndex - 3) / 2;
+            }
+            texturePainter.originalTexture = BGList[fixed_index];
             //save data
             int revertTime = texturePainter.revertTime;
             // save
-            if (previousIndex>= 3)
+            if (previousIndex >= 3)
             {
                 texturePainter.SaveCanvasToFile(texturePainter.resultTexture, $"result_{previousIndex}", userName); // save result
             }
             texturePainter.ClearCanvas();
-            if (currentIndex >=3 )
+            if (currentIndex >= 3)
             {
                 texturePainter.SaveCanvasToFile(texturePainter.runtimeTexture, $"original_{currentIndex}", userName); // save original
             }
 
             texturePainter.renderer2.material.mainTexture = texturePainter.runtimeTexture;
-
+            float workTime = Time.time - StartTime;
+            StartTime = Time.time;
+            recordData(previousIndex, workTime, revertTime, texturePainter.magnifierType.ToString());
 
             //set magnifier
-            if (currentIndex == 2 || (currentIndex > 2 && ((currentIndex-3) % 2 == autoType)))
+            if (currentIndex == 2 || (currentIndex > 2 && ((currentIndex - 3) % 2 == autoType)))
             {
                 texturePainter.magnifierType = TexturePainter.MagnifierType.Auto;
             }
@@ -142,25 +149,23 @@ public class ExpManager : MonoBehaviour
                 texturePainter.magnifierType = TexturePainter.MagnifierType.Hand;
             }
 
-            float workTime = Time.time - StartTime;
-            StartTime = Time.time;
-            recordData(previousIndex, workTime, revertTime);
+
         }
     }
 
-    void recordData(int index, float workTime, int revertTime)
+    void recordData(int index, float workTime, int revertTime, string type = null)
     {
         string folderPath = Path.Combine(Application.dataPath, "Resources", userName);
 
         string csvPath = Path.Combine(folderPath, "info.csv");
-        string csvLine = $"{index},{workTime},{revertTime}\n";
+        string csvLine = $"{index},{workTime},{revertTime},{type}\n";
         if (!Directory.Exists(folderPath))
         {
             Directory.CreateDirectory(folderPath);
         }
         if (!File.Exists(csvPath))
         {
-            File.WriteAllText(csvPath, "previousIndex,workTime,revertTime\n");
+            File.WriteAllText(csvPath, "previousIndex,workTime,revertTime,type\n");
         }
         File.AppendAllText(csvPath, csvLine);
     }
